@@ -1,9 +1,8 @@
-name: Build IS-S10 Linux 6.18 Kernel
+name: Build is10 Kernel with Modules
 
-# 触发条件：当你推送到 main 分支，或者在网页上手动点击运行
 on:
   push:
-    branches: [ main, histb ]
+    branches: [ "histb" ]
   workflow_dispatch:
 
 jobs:
@@ -11,25 +10,47 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout Build Repository
-      uses: actions/checkout@v4
-      with:
-        # fetch-depth: 0 确保拉取完整的 git 历史，这对 Makefile 里获取 GIT_VER 有帮助
-        fetch-depth: 0 
+      - name: Checkout Source
+        uses: actions/checkout@v4
 
-    - name: Install Cross-Compilation Toolchain
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu build-essential bc bison flex libssl-dev make libc6-dev libncurses5-dev xz-utils
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev \
+          gcc-aarch64-linux-gnu python3 rsync kmod tar
 
-    - name: Compile Kernel and Modules
-      run: |
-        # 直接运行你仓库里的 Makefile
-        make all
+      - name: Build Kernel, DTBs and Modules
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export INSTALL_MOD_PATH=../output_modules  # 模块安装路径
+          
+          # 1. 生成配置
+          make is10.config
+          
+          # 2. 编译内核和设备树
+          make -j$(nproc) Image.gz dtbs
+          
+          # 3. 编译模块
+          make -j$(nproc) modules
+          
+          # 4. 安装模块到临时目录
+          mkdir -p $INSTALL_MOD_PATH
+          make modules_install
+          
+          # 5. 打包模块文件方便下载
+          tar -czf is10-modules.tar.gz -C $INSTALL_MOD_PATH .
 
-    - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: is-s10-kernel-6.18-output
-        path: output/
-        retention-days: 7
+      - name: Upload Kernel and DTBs
+        uses: actions/upload-artifact@v4
+        with:
+          name: is10-kernel-and-dtbs
+          path: |
+            arch/arm64/boot/Image.gz
+            arch/arm64/boot/dts/**/*.dtb
+
+      - name: Upload Modules Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: is10-modules
+          path: is10-modules.tar.gz
